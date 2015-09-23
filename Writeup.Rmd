@@ -1,0 +1,126 @@
+---
+title: "Predictive Machine Learning: Writeup"
+author: "Jason Newkirk"
+date: "September 21, 2015"
+output: html_document
+---
+
+# Libraries
+
+```{r, warning=FALSE, message=FALSE}
+require(caret)
+require(randomForest)
+```
+
+# Get Data
+
+```{r, cache=FALSE}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "testing.csv")
+```
+
+# Select Variables to Investigate
+
+I am going to remove variables related to names, timestamps, and total. Totals are removed because these appear to be dependent on the x,y,z components. All other variables are included for consideration.
+
+```{r, cache=FALSE}
+# Read in data
+training <- read.csv("training.csv", stringsAsFactors = F, as.is=T)
+# Remove names and timestamps
+training <- training[, -(1:7)]
+# Remove variables with NA (will examine result)
+training <- training[, colSums(is.na(training)) ==0]
+# Find variable with near-zero variation
+nzv <- nearZeroVar(training, saveMetrics = TRUE)
+# Remove variables with near-zero variation
+training <- training[, !nzv$nzv]
+# Find variables with "total"" in the name (not independent)
+total <- grepl("total", colnames(training))
+# Remove variables with "total"" in the name
+training <- training[, !total]
+training$classe <- factor(training$classe)
+
+```
+
+# Create Partition for Cross-Validation
+
+I'm going to use the random forest method which normally doesn't require cross-validation. However, I want to explicility examine out of sample errors and speed up run-time.
+
+```{r}
+# Make a training set that represents 75% of the data and validate on 25%
+inTrain <- createDataPartition(y=training$classe, p=.75, list=FALSE)
+train <- training[inTrain, ]
+validation <- training[-inTrain, ]
+```
+
+# Fit
+
+Fit using random forest with all data on a single tree (no cross-validation inherent in model). The random forest method is selected because it has proven to be a successful method in competition and works well for predicting "classifications".
+
+```{r, cache=FALSE}
+set.seed(100)
+# Turn off cross-validation for  (fit all data to 1 tree)
+fitControl <- trainControl( method = "none", seeds=NA)
+# Set number of variables randomly sampled at each split to 6 fo speed
+tgrid <- expand.grid(mtry=c(6)) 
+modFit <- train(classe ~ ., method="rf", data=train, trControl=fitControl, tuneGrid=tgrid)
+```
+
+# In-Sample Error
+
+The in-sample error is very low as shown below. In fact, the accuracy is 100%.
+
+```{r}
+predictions <- predict(modFit, newdata = train)
+table(predictions, train$classe)
+# Accurary count
+sum(predictions==train$classe)
+# Error count
+sum(predictions!=train$classe)
+
+# Accurary percentage
+sum(predictions==train$classe)/nrow(train)
+# Error percentage
+sum(predictions!=train$classe)/nrow(train)
+```
+
+# Out-of-Sample Error and Cross-Validation
+
+The out-of-sample error is estimated as <.5%. This is determined by applying the model from the training set to a validation set. The model predicted the correct classe ~4880 and was wrong only ~20 times for a validation set including 4904 records.
+
+```{r}
+predictions <- predict(modFit, newdata = validation)
+table(predictions, validation$classe)
+sum(predictions==validation$classe)
+sum(predictions!=validation$classe)
+
+sum(predictions==validation$classe)/nrow(validation)
+sum(predictions!=validation$classe)/nrow(validation)
+```
+
+# Predict 20 Using Testing Set
+
+```{r}
+testing <- read.csv("testing.csv", stringsAsFactors = F, as.is=T)
+predictors<- training[,-ncol(training)]
+testing <- testing[, colnames(predictors)]
+predictions <- predict(modFit, newdata = testing)
+predictions
+predictions.char <- as.character(predictions)
+```
+
+# Write Answer File
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("answers/problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictions.char)
+
+
+
